@@ -101,7 +101,12 @@ router.post('/experimentos', async (req, res) => {
             context,
             analysisResults,
             taxonomyModel,
+            isTestSensor,
         } = req.body || {};
+
+        if (isTestSensor !== undefined && typeof isTestSensor !== 'boolean') {
+            return res.status(400).json({ success: false, error: 'Tipo de sensor inválido' });
+        }
 
         if (!startDate || !endDate) {
             return res.status(400).json({ success: false, error: 'Faltan fechas del experimento' });
@@ -132,6 +137,11 @@ router.post('/experimentos', async (req, res) => {
                 success: false,
                 error: 'Falta el contexto de la fotografía',
             });
+        }
+
+        // Test runs must never reach MongoDB or upload images to MinIO.
+        if (isTestSensor === true) {
+            return res.json({ success: true, saved: false });
         }
 
         const db = getDatabase();

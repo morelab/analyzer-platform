@@ -1,9 +1,10 @@
 import type {
     Sensor,
     SensoresResponse,
-    GeocodingResult,
     ImageData,
 } from '../types/sensor';
+
+export { geocode, reverseGeocode } from '../utils/geocoding';
 
 const API_URL =
     '/api/sensores?fields=id,nombre,ubicacion,nivelPolucion,metricas.concentracion,metricas.pm25,metricas.pm10,fechaInicio,fechaRecogida,taxonomyModel';
@@ -205,16 +206,6 @@ export async function fetchEstacionesOficiales(
     }
 }
 
-export async function geocode(city: string): Promise<{ lat: number; lon: number }> {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-        city
-    )}`;
-    const response = await fetch(url);
-    const data: GeocodingResult[] = await response.json();
-    if (!data.length) throw new Error('Ubicación no encontrada');
-    return { lat: +data[0].lat, lon: +data[0].lon };
-}
-
 export async function fetchImages(ids: string[]): Promise<ImageData[]> {
     if (!ids.length) return [];
 
@@ -384,6 +375,7 @@ export async function processAnalysisImage(
 }
 
 export async function submitExperiment(payload: {
+    isTestSensor?: boolean;
     startDate: string;
     endDate: string;
     latitude: number;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import L from 'leaflet';
 import {
     geocode,
+    reverseGeocode,
     processAnalysisImage,
     submitExperiment,
     validateSensorImage,
@@ -61,14 +62,19 @@ function getPollutionLevelLabel(concentration: number): string {
 
 export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPageProps) {
     const [step, setStep] = useState<Step>(1);
+    const [isTestSensor, setIsTestSensor] = useState(false);
     const [stepFiveView, setStepFiveView] = useState<'results' | 'sources'>('results');
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [locationName, setLocationName] = useState('');
+    const [selectedLocationName, setSelectedLocationName] = useState('');
+    const [markerLocation, setMarkerLocation] = useState<{ lat: number; lon: number } | null>(null);
+    const [isResolvingLocation, setIsResolvingLocation] = useState(false);
     const [latitude, setLatitude] = useState<number | null>(null);
     const [longitude, setLongitude] = useState<number | null>(null);
     const [imageBase64, setImageBase64] = useState('');
     const [imagePreview, setImagePreview] = useState('');
+    const [imageName, setImageName] = useState('');
     const [photoContext, setPhotoContext] = useState('');
     const [processed, setProcessed] = useState<ProcessedAnalysis | null>(null);
     const [errorMessage, setErrorMessage] = useState('');
@@ -76,11 +82,52 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
     const [isProcessing, setIsProcessing] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isValidatingImage, setIsValidatingImage] = useState(false);
+    const [isSearchingLocation, setIsSearchingLocation] = useState(false);
     const [showInvalidSensorModal, setShowInvalidSensorModal] = useState(false);
+    const experiment = { startDate, endDate, latitude, longitude, imageBase64, photoContext, processed };
+    const [savedExperiment, setSavedExperiment] = useState<typeof experiment | null>(null);
+    const isSaved = !isTestSensor && savedExperiment !== null &&
+        savedExperiment.startDate === startDate && savedExperiment.endDate === endDate &&
+        savedExperiment.latitude === latitude && savedExperiment.longitude === longitude &&
+        savedExperiment.imageBase64 === imageBase64 && savedExperiment.photoContext === photoContext &&
+        savedExperiment.processed === processed;
+    const isBusy = isProcessing || isSubmitting || isValidatingImage || isSearchingLocation;
+
+    const handleBack = () => {
+        setErrorMessage('');
+        setSuccessMessage('');
+        if (step === 5 && stepFiveView === 'sources') {
+            setStepFiveView('results');
+        } else if (step > 1) {
+            setStep((step - 1) as Step);
+        }
+    };
 
     const mapContainerRef = useRef<HTMLDivElement | null>(null);
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
+
+    useEffect(() => {
+        if (!markerLocation) return;
+        const controller = new AbortController();
+        // Wait for the marker to settle; cancel older lookups when it moves again.
+        const timer = window.setTimeout(() => {
+            void reverseGeocode(markerLocation.lat, markerLocation.lon, controller.signal)
+                .then((name) => {
+                    if (!controller.signal.aborted) setSelectedLocationName(name);
+                })
+                .catch(() => {
+                    // Keep the new coordinates as the label when no address is available.
+                })
+                .finally(() => {
+                    if (!controller.signal.aborted) setIsResolvingLocation(false);
+                });
+        }, 500);
+        return () => {
+            window.clearTimeout(timer);
+            controller.abort();
+        };
+    }, [markerLocation]);
 
     const openNativeDatePicker = (input: HTMLInputElement) => {
         const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
@@ -108,6 +155,9 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                 if (pos) {
                     setLatitude(pos.lat);
                     setLongitude(pos.lng);
+                    setSelectedLocationName(`${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)}`);
+                    setIsResolvingLocation(true);
+                    setMarkerLocation({ lat: pos.lat, lon: pos.lng });
                 }
             });
             return;
@@ -125,9 +175,10 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
             if (mapRef.current) {
                 mapRef.current.remove();
                 mapRef.current = null;
+                markerRef.current = null;
             }
         };
-    }, []);
+    }, [step]);
 
     const handleDatesNext = () => {
         setErrorMessage('');
@@ -144,16 +195,23 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
 
     const handleSearchLocation = async () => {
         setErrorMessage('');
-        if (!locationName.trim()) {
+        const searchLocation = locationName.trim();
+        if (!searchLocation) {
             setErrorMessage('Introduce una ubicación');
             return;
         }
+        setIsSearchingLocation(true);
         try {
-            const coords = await geocode(locationName);
+            const coords = await geocode(searchLocation);
             setLatitude(coords.lat);
             setLongitude(coords.lon);
+            setSelectedLocationName(searchLocation);
+            setMarkerLocation(null);
+            setIsResolvingLocation(false);
         } catch {
             setErrorMessage('Localización no encontrada, por favor prueba de nuevo');
+        } finally {
+            setIsSearchingLocation(false);
         }
     };
 
@@ -166,14 +224,6 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
         setStep(3);
     };
 
-    const resetImageSelection = () => {
-        setImagePreview('');
-        setImageBase64('');
-        setPhotoContext('');
-        setProcessed(null);
-        setStepFiveView('results');
-    };
-
     const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
@@ -183,19 +233,24 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
             return;
         }
 
+        setErrorMessage('');
+        setIsValidatingImage(true);
         const reader = new FileReader();
+        reader.onerror = () => {
+            setErrorMessage('No se pudo leer la imagen. Inténtalo de nuevo.');
+            setIsValidatingImage(false);
+            event.target.value = '';
+        };
         reader.onload = async () => {
             const result = typeof reader.result === 'string' ? reader.result : '';
             setErrorMessage('');
             setSuccessMessage('');
-            setIsValidatingImage(true);
 
             const nextImageBase64 = result.includes(',') ? result.split(',')[1] : result;
 
             try {
                 const validation = await validateSensorImage(nextImageBase64);
                 if (!validation.is_sensor) {
-                    resetImageSelection();
                     event.target.value = '';
                     setShowInvalidSensorModal(true);
                     return;
@@ -203,10 +258,12 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
 
                 setImagePreview(result);
                 setImageBase64(nextImageBase64);
+                setImageName(file.name);
                 setPhotoContext('');
                 setProcessed(null);
+                setStepFiveView('results');
+                setSuccessMessage('');
             } catch (error) {
-                resetImageSelection();
                 event.target.value = '';
                 if (error instanceof Error && error.message) {
                     setErrorMessage(error.message);
@@ -231,6 +288,10 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
         }
 
         setErrorMessage('');
+        if (processed) {
+            setStep(4);
+            return;
+        }
         setIsProcessing(true);
 
         try {
@@ -252,6 +313,19 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
 
     const handleSubmit = async () => {
         if (latitude === null || longitude === null || !processed) return;
+        if (isTestSensor) {
+            setErrorMessage('');
+            setSuccessMessage('');
+            setStepFiveView('results');
+            setStep(5);
+            return;
+        }
+        if (isSaved) {
+            setErrorMessage('');
+            setStepFiveView('results');
+            setStep(5);
+            return;
+        }
         if (photoContext.length === 0) {
             setErrorMessage('Añade un contexto para la fotografía antes de guardar el resultado.');
             return;
@@ -298,6 +372,7 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                 },
                 taxonomyModel: processed.taxonomyModel,
             });
+            setSavedExperiment(experiment);
             setSuccessMessage('Resultado guardado correctamente.');
             setStepFiveView('results');
             setStep(5);
@@ -407,8 +482,25 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                     </div>
                 </div>
 
+                {isTestSensor && (
+                    <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        Sensor de prueba: podrás ver el análisis completo sin guardar los datos ni la imagen.
+                    </div>
+                )}
+
                 {errorMessage && <div className="mb-4 rounded bg-red-100 text-red-800 px-3 py-2">{errorMessage}</div>}
                 {successMessage && <div className="mb-4 rounded bg-green-100 text-green-800 px-3 py-2">{successMessage}</div>}
+
+                {step > 1 && (
+                    <button
+                        type="button"
+                        onClick={handleBack}
+                        disabled={isBusy}
+                        className="mb-4 rounded border border-gray-300 px-4 py-2 disabled:opacity-50"
+                    >
+                        {step === 5 && stepFiveView === 'sources' ? 'Volver a resultados' : 'Volver al paso anterior'}
+                    </button>
+                )}
 
                 {step === 1 && (
                     <form
@@ -419,6 +511,20 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                         }}
                     >
                         <h2 className="font-semibold text-lg">Paso 1. ¿Cuándo se hizo el experimento?</h2>
+                        <label className="flex items-center gap-3">
+                            <input
+                                type="checkbox"
+                                checked={isTestSensor}
+                                onChange={(e) => setIsTestSensor(e.target.checked)}
+                                aria-describedby="test-sensor-description"
+                                className="h-5 w-5 accent-ami-azul"
+                            />
+                            <span className="font-medium">Sensor de prueba</span>
+                        </label>
+                        <p id="test-sensor-description" className="text-sm text-gray-700">
+                            Marca esta opción para realizar todo el proceso y ver los resultados sin guardar
+                            el sensor ni su imagen. Si la dejas sin marcar, el resultado se guardará al confirmar el área.
+                        </p>
                         <div>
                             <label className="block text-sm mb-1">Fecha de colocación</label>
                             <input
@@ -455,10 +561,6 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                         className="space-y-4"
                         onSubmit={(e) => {
                             e.preventDefault();
-                            if (latitude !== null && longitude !== null) {
-                                handleConfirmLocation();
-                                return;
-                            }
                             void handleSearchLocation();
                         }}
                     >
@@ -473,9 +575,10 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                             />
                             <button
                                 type="submit"
-                                className="px-4 py-2 rounded bg-ami-azul text-white"
+                                disabled={isSearchingLocation}
+                                className="px-4 py-2 rounded bg-ami-azul text-white disabled:opacity-50"
                             >
-                                Buscar
+                                {isSearchingLocation ? 'Buscando...' : 'Buscar'}
                             </button>
                         </div>
                         {latitude !== null && longitude !== null && (
@@ -485,8 +588,11 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                                 </p>
                                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
                                     <p>
-                                        <strong>Lugar seleccionado:</strong> {locationName || 'Ubicación buscada'}
+                                        <strong>Lugar seleccionado:</strong> {selectedLocationName || 'Ubicación buscada'}
                                     </p>
+                                    {isResolvingLocation && (
+                                        <p role="status">Buscando el nombre de la ubicación...</p>
+                                    )}
                                     <p>
                                         <strong>Coordenadas:</strong> {latitude.toFixed(6)}, {longitude.toFixed(6)}
                                     </p>
@@ -495,7 +601,8 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                                 <button
                                     type="button"
                                     onClick={handleConfirmLocation}
-                                    className="px-4 py-2 rounded bg-green-600 text-white"
+                                    disabled={isSearchingLocation}
+                                    className="px-4 py-2 rounded bg-green-600 text-white disabled:opacity-50"
                                 >
                                     Confirmar ubicación
                                 </button>
@@ -533,7 +640,8 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                                 </div>
                             </div>
                         </div>
-                        <input type="file" accept="image/*" onChange={handleImageChange} />
+                        <input type="file" accept="image/*" onChange={handleImageChange} disabled={isProcessing || isValidatingImage} />
+                        {imageName && <p className="text-sm text-gray-600">Imagen seleccionada: {imageName}</p>}
                         {isValidatingImage && (
                             <p className="text-sm text-gray-600">
                                 Validando que la imagen corresponda a un sensor...
@@ -572,7 +680,7 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                             disabled={isProcessing || isValidatingImage || (Boolean(imageBase64) && photoContext.length === 0)}
                             className="px-4 py-2 rounded bg-ami-azul text-white disabled:opacity-50"
                         >
-                            {isProcessing ? 'Analizando...' : 'Analizar imagen'}
+                            {isProcessing ? 'Analizando...' : processed ? 'Continuar con el análisis anterior' : 'Analizar imagen'}
                         </button>
                     </form>
                 )}
@@ -615,11 +723,9 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                         <div className="flex gap-2">
                             <button
                                 type="button"
-                                onClick={() => {
-                                    setProcessed(null);
-                                    setStep(3);
-                                }}
-                                className="px-4 py-2 rounded border border-gray-300"
+                                onClick={handleBack}
+                                disabled={isSubmitting}
+                                className="px-4 py-2 rounded border border-gray-300 disabled:opacity-50"
                             >
                                 No, reintentar
                             </button>
@@ -628,7 +734,7 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                                 disabled={isSubmitting}
                                 className="px-4 py-2 rounded bg-green-600 text-white disabled:opacity-50"
                             >
-                                {isSubmitting ? 'Guardando...' : 'Sí, guardar resultado'}
+                                {isSubmitting ? 'Guardando...' : isTestSensor ? 'Sí, ver resultados de prueba' : isSaved ? 'Volver a resultados' : 'Sí, guardar resultado'}
                             </button>
                         </div>
                     </form>
@@ -733,7 +839,7 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
 
                         <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 px-4 py-4">
                             <p className="text-lg font-semibold text-emerald-900">
-                                Resultado guardado con éxito.
+                                {isTestSensor ? 'Análisis de prueba completado. No se han guardado los datos ni la imagen.' : 'Resultado guardado con éxito.'}
                             </p>
                             <p className="mt-1 text-sm text-emerald-900">
                                 Puedes seguir con la interpretación del análisis revisando las posibles fuentes contaminantes.

@@ -47,6 +47,11 @@ export interface SensoresResponse {
 export interface GeocodingResult {
     lat: string;
     lon: string;
+    osm_type?: 'node' | 'way' | 'relation';
+    osm_id?: number;
+    category?: string;
+    addresstype?: string;
+    type?: string;
 }
 
 export interface ImageData {

@@ -41,7 +41,7 @@ jobs:
           file: ./frontend/Dockerfile.prod
           platforms: linux/amd64
           push: true
-          tags: iboncas/amiaire-frontend:latest
+          tags: dieguich/amiaire-frontend:latest
 
       - name: Build and push backend
         uses: docker/build-push-action@v6
@@ -50,7 +50,7 @@ jobs:
           file: ./backend/Dockerfile.prod
           platforms: linux/amd64
           push: true
-          tags: iboncas/amiaire-backend:latest
+          tags: dieguich/amiaire-backend:latest
 
       - name: Build and push analysis service
         uses: docker/build-push-action@v6
@@ -59,7 +59,7 @@ jobs:
           file: ./analysis-service/Dockerfile.prod
           platforms: linux/amd64
           push: true
-          tags: iboncas/amiaire-analysis-service:latest
+          tags: dieguich/amiaire-analysis-service:latest
 
       - name: Deploy on Hetzner VM
         uses: appleboy/ssh-action@v1.2.0

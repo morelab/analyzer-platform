@@ -2,6 +2,15 @@ import JSZip from 'jszip';
 import type { Sensor } from '../types/sensor';
 import { formatDate } from './dateUtils';
 
+const CSV_POLLUTION_CATEGORIES = [
+    'combustion_related',
+    'mechanical_non_combustion_particulate',
+    'biological',
+    'fibrous_synthetic_materials',
+    'industrial',
+    'mixed_unknown',
+] as const;
+
 export function downloadCSV(sensors: Sensor[]): void {
     if (!sensors.length) {
         alert('No hay datos para exportar');
@@ -17,6 +26,7 @@ export function downloadCSV(sensors: Sensor[]): void {
         'fechaRecogida',
         'PM10',
         'PM2.5',
+        ...CSV_POLLUTION_CATEGORIES.map((category) => `${category}_percentage`),
     ];
     const rows = sensors.map((s) =>
         [
@@ -28,6 +38,14 @@ export function downloadCSV(sensors: Sensor[]): void {
             formatDate(s.fechaRecogida),
             typeof s.metricas?.pm10 === 'number' ? s.metricas.pm10.toFixed(1) : 'N/A',
             typeof s.metricas?.pm25 === 'number' ? s.metricas.pm25.toFixed(1) : 'N/A',
+            ...CSV_POLLUTION_CATEGORIES.map((category) => {
+                const percentage = s.taxonomyModel?.ranked_categories?.find(
+                    (item) => item.category === category
+                )?.percentage;
+                return typeof percentage === 'number' && Number.isFinite(percentage)
+                    ? percentage
+                    : 'N/A';
+            }),
         ].join(',')
     );
 
