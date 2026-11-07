@@ -102,10 +102,18 @@ router.post('/experimentos', async (req, res) => {
             analysisResults,
             taxonomyModel,
             isTestSensor,
+            sensorEnvironment,
         } = req.body || {};
 
         if (isTestSensor !== undefined && typeof isTestSensor !== 'boolean') {
             return res.status(400).json({ success: false, error: 'Tipo de sensor inválido' });
+        }
+
+        if (sensorEnvironment !== 'indoor' && sensorEnvironment !== 'outdoor') {
+            return res.status(400).json({
+                success: false,
+                error: 'Selecciona si el sensor es de interior o de exterior.',
+            });
         }
 
         if (!startDate || !endDate) {
@@ -160,6 +168,7 @@ router.post('/experimentos', async (req, res) => {
             'Posibles fuentes contaminantes': taxonomyModel || null,
             'Imagen de entrada': inputImageUrl,
             context,
+            sensorEnvironment,
         };
 
         const result = await collection.insertOne(doc);

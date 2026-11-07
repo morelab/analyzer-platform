@@ -63,6 +63,7 @@ function getPollutionLevelLabel(concentration: number): string {
 export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPageProps) {
     const [step, setStep] = useState<Step>(1);
     const [isTestSensor, setIsTestSensor] = useState(false);
+    const [sensorEnvironment, setSensorEnvironment] = useState<'indoor' | 'outdoor' | null>(null);
     const [stepFiveView, setStepFiveView] = useState<'results' | 'sources'>('results');
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -84,9 +85,10 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
     const [isValidatingImage, setIsValidatingImage] = useState(false);
     const [isSearchingLocation, setIsSearchingLocation] = useState(false);
     const [showInvalidSensorModal, setShowInvalidSensorModal] = useState(false);
-    const experiment = { startDate, endDate, latitude, longitude, imageBase64, photoContext, processed };
+    const experiment = { startDate, endDate, latitude, longitude, imageBase64, photoContext, processed, sensorEnvironment };
     const [savedExperiment, setSavedExperiment] = useState<typeof experiment | null>(null);
     const isSaved = !isTestSensor && savedExperiment !== null &&
+        savedExperiment.sensorEnvironment === sensorEnvironment &&
         savedExperiment.startDate === startDate && savedExperiment.endDate === endDate &&
         savedExperiment.latitude === latitude && savedExperiment.longitude === longitude &&
         savedExperiment.imageBase64 === imageBase64 && savedExperiment.photoContext === photoContext &&
@@ -182,6 +184,10 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
 
     const handleDatesNext = () => {
         setErrorMessage('');
+        if (!sensorEnvironment) {
+            setErrorMessage('Selecciona si el sensor es de interior o de exterior.');
+            return;
+        }
         if (!startDate || !endDate) {
             setErrorMessage('Introduce ambas fechas');
             return;
@@ -313,6 +319,10 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
 
     const handleSubmit = async () => {
         if (latitude === null || longitude === null || !processed) return;
+        if (!sensorEnvironment) {
+            setErrorMessage('Selecciona si el sensor es de interior o de exterior.');
+            return;
+        }
         if (isTestSensor) {
             setErrorMessage('');
             setSuccessMessage('');
@@ -356,6 +366,7 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
 
         try {
             await submitExperiment({
+                sensorEnvironment,
                 startDate,
                 endDate,
                 latitude,
@@ -511,6 +522,28 @@ export default function ParticleAnalysisPage({ onOpenMap }: ParticleAnalysisPage
                         }}
                     >
                         <h2 className="font-semibold text-lg">Paso 1. ¿Cuándo se hizo el experimento?</h2>
+                        <fieldset>
+                            <legend className="text-sm font-medium mb-2">Ubicación del sensor (obligatorio)</legend>
+                            <div className="grid grid-cols-2 gap-2">
+                                {(['indoor', 'outdoor'] as const).map((environment) => (
+                                    <label
+                                        key={environment}
+                                        className={`flex items-center justify-center gap-2 rounded border px-3 py-3 cursor-pointer ${sensorEnvironment === environment ? 'border-ami-azul bg-ami-azul text-white' : 'border-gray-300 bg-white text-gray-800'}`}
+                                    >
+                                        <input
+                                            type="radio"
+                                            name="sensor-environment"
+                                            value={environment}
+                                            checked={sensorEnvironment === environment}
+                                            onChange={() => setSensorEnvironment(environment)}
+                                            required
+                                            className="h-4 w-4 accent-ami-azul"
+                                        />
+                                        {environment === 'indoor' ? 'Sensor de interior' : 'Sensor de exterior'}
+                                    </label>
+                                ))}
+                            </div>
+                        </fieldset>
                         <label className="flex items-center gap-3">
                             <input
                                 type="checkbox"

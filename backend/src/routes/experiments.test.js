@@ -5,6 +5,7 @@ import router from './experiments.js';
 
 const submit = router.stack.find((layer) => layer.route?.path === '/experimentos').route.stack[0].handle;
 const experiment = {
+    sensorEnvironment: 'indoor',
     startDate: '2026-10-01',
     endDate: '2026-10-02',
     latitude: 43.26,
@@ -53,4 +54,20 @@ test('rejects ambiguous test flags before any persistence', async () => {
 test('test sensors still require valid experiment data', async () => {
     const response = await request({ ...experiment, isTestSensor: true, latitude: null });
     assert.equal(response.statusCode, 400);
+});
+
+test('requires an explicit indoor or outdoor choice before persistence', async () => {
+    for (const sensorEnvironment of [undefined, null, '', 'other', true, 1]) {
+        const response = await request({ ...experiment, sensorEnvironment });
+        assert.equal(response.statusCode, 400);
+        assert.equal(response.body.error, 'Selecciona si el sensor es de interior o de exterior.');
+    }
+});
+
+test('accepts both indoor and outdoor test sensors', async () => {
+    for (const sensorEnvironment of ['indoor', 'outdoor']) {
+        const response = await request({ ...experiment, sensorEnvironment, isTestSensor: true });
+        assert.equal(response.statusCode, 200);
+        assert.deepEqual(response.body, { success: true, saved: false });
+    }
 });

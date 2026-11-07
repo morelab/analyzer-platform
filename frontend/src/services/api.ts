@@ -375,6 +375,7 @@ export async function processAnalysisImage(
 }
 
 export async function submitExperiment(payload: {
+    sensorEnvironment: 'indoor' | 'outdoor';
     isTestSensor?: boolean;
     startDate: string;
     endDate: string;
